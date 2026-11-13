@@ -200,6 +200,7 @@
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
       <a data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
       <a data-ptab="settings">Settings</a>
+      <a data-ptab="references">Reference sources</a>
     </nav>
   </header>
 
@@ -367,6 +368,27 @@
     </section>
   </section>
 
+  <section class="ptab" data-pane="references" id="referencesPane">
+    <section class="panel">
+      <header class="panel-head">
+        <h2>Reference sources</h2>
+        <button class="primary small-btn" id="referenceAddFile" type="button">Add file…</button>
+        <button class="small-btn" id="referenceAddFolder" type="button">Add folder…</button>
+      </header>
+      <div class="pad">
+        <p class="muted">Read-only local text sources, kept privately by this app. They are not matched against the game.
+          Supported text: C/C++ source and headers, Markdown, text, and HTML.</p>
+        <div id="referenceLog" class="job-log" aria-live="polite"></div>
+        <div id="referenceList"></div>
+        <form id="referenceSearch">
+          <label for="referenceQuery">Search indexed text</label>
+          <input id="referenceQuery" maxlength="1000">
+          <button id="referenceSearchButton" type="submit">Search</button>
+        </form>
+        <div id="referenceResults" aria-live="polite"></div>
+      </div>
+    </section>
+  </section>
   <!-- settings -->
   <section class="ptab" data-pane="settings">
     <div class="cols">
@@ -552,6 +574,7 @@
 <script src="/assets/js/sidebar.js"></script>
 <script src="/assets/js/home.js"></script>
 <script src="/assets/js/project.js"></script>
+<script src="/assets/js/references.js"></script>
 <script src="/assets/js/map.js"></script>
 <script src="/assets/js/agents.js"></script>
 <script src="/assets/js/function.js"></script>

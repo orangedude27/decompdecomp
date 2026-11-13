@@ -32,6 +32,13 @@ def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome()
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_reference_sources_ui_covers_actions_search_and_project_races():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_references.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")

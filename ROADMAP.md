@@ -61,6 +61,11 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
 | Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | — | ✓ N64, including supported original ROM versions and byte orders; exact-file splat; — dtk, configure and whole-disc PS |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Private reference text search¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ |
+
+Private reference text search uses the shared project UI and database, independent of a console's compiler.
+Its `shared¹` entries mean synthetic ROM-mode and project-mode service, HTTP and GUI coverage only;
+no per-console real-game checks have been run. This does not import names or types, expose agent tools, or try matches yet.
 
 Where to start on a gap:
 - **PS4**: Linux x86-64 imports decrypted ELF and judges with strict objdiff. Synthetic tests cover leaf functions and same-file, cross-file and import calls, including rejection of incorrect callees and code. The checked rows are covered by the demo conformance tests. Other rows stay “—” until exercised through the real PS4 engine: twins, permuting, polishing, saves/README cards, rooms, shared knowledge, Check again and verdicts need console-specific validation. Autopilot, header-aware drafts, compiler switching/surveys, source splitting, piece joining, class/structure recovery, reimport and whole-game export remain implementation gaps. Encrypted SELF/PKG and PRX modules are unsupported.
@@ -837,6 +842,18 @@ only under 3,000 characters.
 Measure each step on that DS game's 25: how many get tried and how far, against the week before. Step 2 is what
 matters most for free models: step 3 adds speed, and contention on one file, so it waits until 2 shows parts can be
 worked on alone.
+
+### Reference sources (#270)
+
+Local files and folders can now be attached read-only, indexed privately, refreshed, disabled, removed, and searched.
+Snapshots stay in the app database, not project saves, rooms, or exports. Supported text is C/C++ and headers,
+Markdown, plain text, and HTML (searched as text, never rendered). Synthetic ROM/project-mode tests cover bounded
+indexing, privacy, cancellation, guards and the UI; real-game and Windows/macOS checks remain to be run.
+
+Next, in separate stages: bounded agent retrieval and reviewed metadata imports; explicit reference candidate trials;
+automatic exact-reference trials; then evidence-ranked cross-version suggestions. Near-matches will remain attempts,
+never accepted matches without the existing judge's verdict. Git URL acquisition and arbitrary Ghidra project
+formats are not included in the local text release.
 
 ### Library decomps built locally
 

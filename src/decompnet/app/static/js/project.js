@@ -6,6 +6,7 @@ const MAP_EVERY_MS = 20000;  // its whole map again, even when nothing said it c
 async function openProject(slug, tab = "overview") {
   show("project");
   const gen = ++S.gen;
+  if (window.resetReferences) window.resetReferences();
   S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   S.primed = false; S.openedAt = Date.now() / 1000;
@@ -83,6 +84,7 @@ function setTab(tab) {
   if (tab === "functions") renderList();
   if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
   if (tab === "settings") renderProjectSettings();
+  if (tab === "references") loadReferences();
 }
 document.querySelectorAll("[data-goto]").forEach((a) => {
   a.onclick = (e) => {

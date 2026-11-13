@@ -116,7 +116,7 @@ class Jobs:
 
         def check_cancel() -> None:
             if cancel.is_set():
-                raise RuntimeError("opening the saved project was cancelled")
+                raise RuntimeError("operation was cancelled")
 
         log.check_cancel = check_cancel
 
@@ -130,7 +130,7 @@ class Jobs:
                 logger.info("job %s %s done in %.0fs", kind, jid, time.time() - job["t"])
             except BaseException as e:  # noqa: BLE001  a job must end, whatever went wrong
                 if cancel.is_set():
-                    job["error"] = "Opening the saved project was cancelled."
+                    job["error"] = "Operation was cancelled."
                     job["state"] = "cancelled"
                     logger.info("job %s %s cancelled", kind, jid)
                     return

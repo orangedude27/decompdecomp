@@ -205,6 +205,15 @@ async function main() {
   assert.equal(status.dataset.state, "running");
   finish();
   assert.equal(status.textContent, "Retry finished.");
+  // Reference operations use separate captured logs so one job's cleanup cannot clear another's work bar.
+  const referenceLogs = [element(), element()];
+  const referenceFinish = referenceLogs.map((log, index) => retry.ctx.beginWork(log, `Reference ${index + 1}`, [], "Reference finished."));
+  assert.notEqual(referenceLogs[0]._workStatus, referenceLogs[1]._workStatus);
+  assert.notEqual(referenceLogs[0].bar, referenceLogs[1].bar);
+  referenceFinish[0]();
+  assert.equal(referenceLogs[1].bar.removed, undefined);
+  referenceFinish[1]();
+  assert.ok(referenceLogs.every((log) => log.bar.removed));
   // A setup failure keeps one raw log, a concise summary, and a clipboard button.
   const copyTest = setup(...cases[0]);
   const raw = "mips-linux-gnu-cpp: missing\nmake: *** Error 127";

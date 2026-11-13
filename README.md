@@ -132,6 +132,10 @@ with `/login`, and choose the account when you start a helper agent.
 **ROM library.** In **Settings → ROM library**, choose a folder with your extracted game files. Click **Search ROM library** on an imported project's setup page to fill in a
 verified match.
 
+**Reference sources.** Open a project's **Reference sources** tab to add local C/C++ files and headers, Markdown, text, or HTML.
+Search returns private, read-only snapshots with relative paths and line numbers. Refresh updates the snapshot; disabling hides it from search.
+Removing a source never deletes its original files. References do not change game files or matching, and are not included in project saves, rooms, or exports.
+
 ## Use it responsibly
 - Use only games that you own. decompdecomp contains no game code and supplies no ROMs.
 - Everything runs on your computer. Nothing of your game is sent anywhere, except to the model you choose.

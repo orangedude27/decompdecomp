@@ -16,6 +16,16 @@ CREATE TABLE IF NOT EXISTS agents(
 CREATE TABLE IF NOT EXISTS projects(
   id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT, description TEXT, arch TEXT,
   big_endian INTEGER NOT NULL DEFAULT 0, root TEXT NOT NULL, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reference_sources(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, root TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'registered', file_count INTEGER NOT NULL DEFAULT 0,
+  byte_count INTEGER NOT NULL DEFAULT 0, indexed_at REAL, warnings TEXT NOT NULL DEFAULT '', error TEXT,
+  stale INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS reference_files(
+  source_id INTEGER NOT NULL REFERENCES reference_sources(id) ON DELETE CASCADE,
+  path TEXT NOT NULL, text TEXT NOT NULL, content_hash TEXT NOT NULL, PRIMARY KEY(source_id,path));
+CREATE INDEX IF NOT EXISTS idx_reference_sources_project ON reference_sources(project_id);
 CREATE TABLE IF NOT EXISTS context_versions(
   project_id INTEGER, version INTEGER, header TEXT, agent_id INTEGER, message TEXT, created_at REAL,
   PRIMARY KEY(project_id, version));
@@ -235,6 +245,9 @@ class Store:
         self.conn.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT_BYTES}")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        # A process may have exited during filesystem traversal; leave its source refreshable and unsearchable.
+        self.conn.execute("UPDATE reference_sources SET status='error',stale=1,error='Indexing did not complete.' "
+                          "WHERE status='indexing'")
         added = set()
         for table, column, ddl in MIGRATIONS:
             cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
