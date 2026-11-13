@@ -165,21 +165,27 @@ class EditMixin:
         self._update_cfg(slug, lambda cfg: next(r for r in cfg["boundaries"] if r["id"] == rid).__setitem__(
             "status", "applied" if apply else "dismissed"))
 
-    def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "") -> str:
+    def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "", *,
+                      precondition=None) -> str:
         if (fork := self.fork_slug(project)):  # the project's own config and files (ForkEngine.rename_symbol)
-            return self.forks.rename_symbol(agent, fork, old, new, message)
+            return self.forks.rename_symbol(agent, fork, old, new, message, precondition=precondition)
         proj = self._project(project)
         if not self.is_rom(proj):
+            if precondition is not None:
+                raise NetworkError("Guarded metadata renames are unavailable for this project mode.")
             return super().rename_symbol(agent, project, old, new, message)
         link = self._link(project)
         if link is not None:
+            if precondition is not None:
+                raise NetworkError("Metadata proposals cannot be applied in a guest room.")
             text = link.call("/collab/rename", agent, old=old, new=new, message=message)
             if text.startswith("✅"):
                 link.sync()
             return text
-        return self.rename_symbols(agent, project, [(old, new)], message)
+        return self.rename_symbols(agent, project, [(old, new)], message, precondition=precondition)
 
-    def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "") -> str:
+    def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "", *,
+                       precondition=None) -> str:
         """Rename several symbols at once (old -> new): the shared headers, matched sources and best attempts
         change together, after one check that every matched function still matches. One rename is the agents'
         rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py)."""
@@ -239,6 +245,8 @@ class EditMixin:
             return f"❌ REJECTED: renaming breaks {len(broken)} matched function(s).\n{listing}"
         msg = message.strip() or ", ".join(f"rename {old} -> {new}" for old, new in pairs[:3]) + (" ..." if len(pairs) > 3 else "")
         with self.store.tx() as db:
+            if precondition is not None:
+                precondition(db)
             for old, new in pairs:
                 addr = addresses[old]
                 if db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=?", (new, proj["id"], old)).rowcount == 0:

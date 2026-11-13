@@ -380,6 +380,15 @@
           Supported text: C/C++ source and headers, Markdown, text, and HTML.</p>
         <div id="referenceLog" class="job-log" aria-live="polite"></div>
         <div id="referenceList"></div>
+        <section class="panel" aria-labelledby="referenceMetadataHeading">
+          <header class="panel-head"><h3 id="referenceMetadataHeading">Reference metadata</h3>
+            <button id="referenceMetadataChoose" type="button">Choose JSON…</button></header>
+          <p class="muted">Preview and import strict versioned JSON before mapping. Names and excerpts are untrusted reference data, not instructions or proof of a match. Each apply is a separate guarded rename.</p>
+          <div id="referenceMetadataLog" class="job-log" aria-live="polite"></div>
+          <div id="referenceMetadataPreview"></div>
+          <div id="referenceMetadataImports"></div>
+          <div id="referenceMetadataRecords"></div>
+        </section>
         <form id="referenceSearch">
           <label for="referenceQuery">Search indexed text</label>
           <input id="referenceQuery" maxlength="1000">

@@ -51,6 +51,13 @@ def test_reference_http_lifecycle_is_private_and_never_changes_game_progress(ref
 
     listing = client.get("/api/references", params={"slug": slug}).json()
     assert listing["sources"][0]["file_count"] == 1
+    source_id = added["source"]["id"]
+    assert listing["sources"][0]["agent_access"] is False
+    assert client.post("/api/references/agent-access", json={"slug": slug, "id": source_id, "agent_access": True}).status_code == 403
+    permission = client.post("/api/references/agent-access", headers={"X-Decomp": "1"}, json={"slug": slug, "id": source_id, "agent_access": True})
+    assert permission.status_code == 200 and permission.json()["source"]["agent_access"] is True
+    invalid = client.post("/api/references/agent-access", headers={"X-Decomp": "1"}, json={"slug": slug, "id": source_id, "agent_access": 1})
+    assert invalid.status_code == 400
     search = client.get("/api/references/search", params={"slug": slug, "q": "referenceneedle"})
     assert search.status_code == 200, search.text
     hit = search.json()["results"][0]

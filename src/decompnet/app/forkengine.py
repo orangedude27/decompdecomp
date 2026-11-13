@@ -1737,7 +1737,8 @@ class ForkEngine:
 
     SOURCE_SUFFIXES = (".c", ".h", ".cpp", ".hpp", ".cp", ".cc", ".inc")
 
-    def rename_symbol(self, agent: Agent | None, slug: str, old: str, new: str, message: str = "") -> str:
+    def rename_symbol(self, agent: Agent | None, slug: str, old: str, new: str, message: str = "", *,
+                      precondition=None) -> str:
         """Give one of the game's symbols (a function, data) a real name: in the console's config, where its name
         comes from (Console.rename_symbol), and as a whole word in every source and header file. Kept only when the
         project sets up again, the game still rebuilds as it did and every match still matches; else every file is
@@ -1756,6 +1757,9 @@ class ForkEngine:
         word, taken = re.compile(console.rename_pattern(old)), re.compile(rf"\b{re.escape(new)}\b")
         checks = consoles.REBUILD_CHECK in console.features
         with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            if precondition is not None:
+                with self.net.store.tx() as db:
+                    precondition(db)
             # read under the lock: eight polishing helpers renamed at once, each wrote back files it had read before
             # the others' renames, and half of an Xbox game's renames were undone in some files and not others
             files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
@@ -1780,23 +1784,35 @@ class ForkEngine:
                 if checks and before.get("identical") and not console.check_rebuild(fp, version).get("identical"):
                     raise ForkError("the game no longer rebuilt byte for byte with the new name")
                 rep = fp.report()
+                if precondition is not None:
+                    with self.net.store.tx() as db:
+                        precondition(db)
                 now = {f["name"] for u in rep.get("units", []) for f in u.get("functions", [])
                        if (f.get("fuzzy_match_percent") or 0) >= 100}
                 renamed = new if console.renames_in_report else old
                 if lost := sorted(n for n in matched if (renamed if n == old else n) not in now):
                     raise ForkError(f"these functions would stop matching: {', '.join(lost[:8])}")
-            except (ForkError, RomError, ObjdiffError, OSError, ValueError) as e:
+            except (ForkError, RomError, ObjdiffError, OSError, ValueError, NetworkError) as e:
                 for p, t in saved.items():
                     p.write_text(t, encoding="utf-8")
                 for cmd in fp.setup_commands(version):
                     fp.run(cmd, log=lambda *_: None)
                 raise NetworkError(f"not renamed, nothing changed: {e}") from None
-            with self.net.store.tx() as db:  # the function keeps its row, its matches and notes, under its new name
-                if console.renames_in_report:  # (else sync gives it its real name, from the console's config)
-                    db.execute("UPDATE functions SET name=?, meta=json_set(COALESCE(meta, '{}'), '$.symbol', ?) WHERE "
-                               "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
-                               (new, new, proj["id"], old, old))
-                self.net._event(db, proj["id"], agent.id if agent else None, "rename", f"{old} → {new}")
+            try:
+                with self.net.store.tx() as db:  # the function keeps its row, its matches and notes, under its new name
+                    if precondition is not None:
+                        precondition(db)
+                    if console.renames_in_report:  # (else sync gives it its real name, from the console's config)
+                        db.execute("UPDATE functions SET name=?, meta=json_set(COALESCE(meta, '{}'), '$.symbol', ?) WHERE "
+                                   "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
+                                   (new, new, proj["id"], old, old))
+                    self.net._event(db, proj["id"], agent.id if agent else None, "rename", f"{old} → {new}")
+            except (NetworkError, ValueError) as e:
+                for p, t in saved.items():
+                    p.write_text(t, encoding="utf-8")
+                for cmd in fp.setup_commands(version):
+                    fp.run(cmd, log=lambda *_: None)
+                raise NetworkError(f"not renamed, nothing changed: {e}") from None
             self._commit_paths(proj, fp, [p.relative_to(fp.root).as_posix() for p in saved],
                                f"Rename {old} to {new}\n\n{message.strip() or 'Named'} by "
                                f"{agent.name if agent else 'decompdecomp'} with decompdecomp; the game still builds as it "

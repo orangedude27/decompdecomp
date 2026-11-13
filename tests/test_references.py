@@ -254,3 +254,181 @@ def test_crashed_indexing_recovers_and_schema_cascades(refs):
     remaining = reopened.one("SELECT COUNT(*) n FROM reference_sources")
     assert remaining is not None and remaining["n"] == 0
     reopened.conn.close()
+
+
+def test_metadata_reference_refresh_is_rejected(refs):
+    store, service, root = refs
+    pid = service.project("rom")
+    with store.tx() as db:
+        cursor = db.execute(
+            "INSERT INTO reference_sources(project_id,name,root,kind,status) VALUES(?,?,?,?,?)",
+            (pid, "metadata", "", "metadata", "ready"),
+        )
+    with pytest.raises(NetworkError, match="importing the JSON"):
+        service.refresh("rom", cursor.lastrowid)
+
+
+def test_agent_access_is_private_by_default_and_can_be_revoked(refs):
+    _, service, root = refs
+    file = root / "private.txt"
+    file.write_text("first\nneedle café\nlast\n", encoding="utf-8")
+    source = service.add("rom", str(file))
+    assert source["agent_access"] is False
+    service.refresh("rom", source["id"])
+    private_search = service.agent_search("rom", "needle")
+    assert private_search["truncated"] is False and "No matching text." in private_search["text"]
+    assert "UNTRUSTED REFERENCE DATA" in private_search["text"]
+    source = service.agent_access("rom", source["id"], True)
+    assert source["agent_access"] is True
+    result = service.agent_search("rom", "needle")
+    assert "LINES: 2-2" in result["text"] and "UNTRUSTED REFERENCE DATA" in result["text"]
+    handle = result["text"].split("FILE_ID: ", 1)[1].split("\n", 1)[0]
+    read = service.agent_read("rom", handle)
+    assert "SOURCE: private.txt" in read and "SHA256:" in read and "first\nneedle café\nlast" in read
+    service.enabled("rom", source["id"], False)
+    assert service.agent_search("rom", "needle")["truncated"] is False
+    with pytest.raises(NetworkError):
+        service.agent_read("rom", handle)
+    service.enabled("rom", source["id"], True)
+    service.agent_access("rom", source["id"], False)
+    with pytest.raises(NetworkError):
+        service.agent_read("rom", handle)
+    with pytest.raises(ValueError):
+        service.agent_access("rom", source["id"], 1)
+
+
+def test_agent_reference_handles_are_hash_bound_and_project_scoped(refs):
+    import base64
+    import json
+
+    store, service, root = refs
+    file = root / "same.txt"
+    file.write_text("needle")
+    source = service.add("rom", str(file))
+    service.refresh("rom", source["id"])
+    service.agent_access("rom", source["id"], True)
+    handle = service.agent_search("rom", "needle")["text"].split("FILE_ID: ", 1)[1].split("\n", 1)[0]
+    with pytest.raises(NetworkError):
+        service.agent_read("project", handle)
+    forged = base64.urlsafe_b64encode(json.dumps([source["id"], "same.txt", "0" * 64]).encode()).decode().rstrip("=")
+    with pytest.raises(NetworkError):
+        service.agent_read("rom", forged)
+    with pytest.raises(NetworkError):
+        service.agent_read("rom", "%%%")
+    file.write_text("changed on disk")
+    assert "needle" in service.agent_read("rom", handle)
+    with store.tx() as db:
+        db.execute("UPDATE reference_sources SET stale=1 WHERE id=?", (source["id"],))
+    with pytest.raises(NetworkError):
+        service.agent_read("rom", handle)
+
+
+def test_agent_reference_budgets_and_validation(refs):
+    _, service, root = refs
+    file = root / "long.txt"
+    file.write_text("x" * 20000 + "needle\n" + "z" * 20000)
+    source = service.add("rom", str(file))
+    service.refresh("rom", source["id"])
+    service.agent_access("rom", source["id"], True)
+    result = service.agent_search("rom", "needle")
+    assert len(result["text"]) <= 16000
+    handle = result["text"].split("FILE_ID: ", 1)[1].split("\n", 1)[0]
+    assert len(service.agent_read("rom", handle, count=200)) <= 16000
+    for start, count in ((0, 1), (1, True), (1, 201)):
+        with pytest.raises(ValueError):
+            service.agent_read("rom", handle, start, count)
+
+
+def test_agent_search_casefold_maps_both_match_endpoints_and_multiline_source(refs):
+    _, service, root = refs
+    path = root / "unicode.txt"
+    path.write_text("before\nStraße\nafter\n", encoding="utf-8")
+    source = service.add("rom", str(path))
+    service.refresh("rom", source["id"])
+    service.agent_access("rom", source["id"], True)
+    result = service.agent_search("rom", "STRASSE")
+    assert "LINES: 2-2" in result["text"]
+    assert "Straße" in result["text"]
+    assert "before\nafter" not in result["text"]
+    assert len(result["text"]) <= 16000
+
+
+def test_agent_search_budget_marker_and_omitted_hit_are_inside_budget(refs):
+    _, service, root = refs
+    path = root / "needle.txt"
+    path.write_text("needle")
+    source = service.add("rom", str(path))
+    service.refresh("rom", source["id"])
+    service.agent_access("rom", source["id"], True)
+    second = root / "second.txt"
+    second.write_text("needle again")
+    second_source = service.add("rom", str(second))
+    service.refresh("rom", second_source["id"])
+    service.agent_access("rom", second_source["id"], True)
+    result = service.agent_search("rom", "needle", limit=1)
+    assert len(result["text"]) <= 16000
+    assert result["truncated"] is True and "[Truncated; narrow the query.]" in result["text"]
+    assert "FILE_ID:" in result["text"] and "UNTRUSTED REFERENCE DATA" in result["text"]
+
+
+def test_agent_read_bounds_line_range_and_rejects_deep_or_invalid_handles(refs):
+    import base64
+
+    _, service, root = refs
+    path = root / "many.txt"
+    path.write_text("line\n" * 250, encoding="utf-8")
+    source = service.add("rom", str(path))
+    service.refresh("rom", source["id"])
+    service.agent_access("rom", source["id"], True)
+    result = service.agent_search("rom", "line")
+    handle = result["text"].split("FILE_ID: ", 1)[1].split("\n", 1)[0]
+    page = service.agent_read("rom", handle, count=200)
+    assert len(page) <= 16000 and "LINES: 1-200" in page and "Truncated" in page
+    nested = base64.urlsafe_b64encode(("[" * 1100 + "0" + "]" * 1100).encode()).decode().rstrip("=")
+    with pytest.raises(NetworkError, match="invalid"):
+        service.agent_read("rom", nested)
+    invalid_shape = base64.urlsafe_b64encode(b'{"source":1}').decode().rstrip("=")
+    with pytest.raises(NetworkError, match="invalid"):
+        service.agent_read("rom", invalid_shape)
+
+
+def test_agent_search_reports_matched_but_omitted_when_provenance_cannot_fit(refs):
+    store, service, root = refs
+    path = root / "huge-provenance.txt"
+    path.write_text("needle")
+    source = service.add("rom", str(path))
+    service.refresh("rom", source["id"])
+    service.agent_access("rom", source["id"], True)
+    with store.tx() as db:
+        db.execute("UPDATE reference_sources SET name=? WHERE id=?", ("n" * 8000, source["id"]))
+        db.execute("UPDATE reference_files SET path=? WHERE source_id=?", ("p" * 8000, source["id"]))
+    result = service.agent_search("rom", "needle")
+    assert result["truncated"] is True
+    assert len(result["text"]) <= 16000
+    assert "Matches omitted due to the output budget" in result["text"]
+
+
+def test_agent_search_fetches_only_bounded_ordered_pages(refs, monkeypatch):
+    store, service, root = refs
+    for index in range(18):
+        path = root / f"source-{index:02}.txt"
+        path.write_text("needle")
+        source = service.add("rom", str(path))
+        service.refresh("rom", source["id"])
+        service.agent_access("rom", source["id"], True)
+    original_all = store.all
+    pages = []
+
+    def checked_pages(sql, *args):
+        if "s.agent_access=1" in sql:
+            assert "LIMIT 16" in sql
+            page = original_all(sql, *args)
+            assert len(page) <= 16
+            pages.append(page)
+            return page
+        return original_all(sql, *args)
+
+    monkeypatch.setattr(store, "all", checked_pages)
+    result = service.agent_search("rom", "needle", limit=20)
+    assert len(pages) >= 2
+    assert "FILE_ID:" in result["text"] and len(result["text"]) <= 16000

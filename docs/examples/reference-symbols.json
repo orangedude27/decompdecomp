@@ -1,0 +1,18 @@
+{
+  "schema": "decompdecomp.reference-metadata",
+  "version": 1,
+  "kind": "symbols",
+  "build": null,
+  "records": [
+    {
+      "id": "sample-function-1",
+      "kind": "function",
+      "name": "external_example",
+      "address": "0x1000",
+      "unit": "src/example.c",
+      "signature": "int external_example(void)",
+      "comment": "Example-only reference data.",
+      "pseudocode": ""
+    }
+  ]
+}

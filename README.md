@@ -133,8 +133,19 @@ with `/login`, and choose the account when you start a helper agent.
 verified match.
 
 **Reference sources.** Open a project's **Reference sources** tab to add local C/C++ files and headers, Markdown, text, or HTML.
-Search returns private, read-only snapshots with relative paths and line numbers. Refresh updates the snapshot; disabling hides it from search.
-Removing a source never deletes its original files. References do not change game files or matching, and are not included in project saves, rooms, or exports.
+Search returns private, read-only snapshots with relative paths and line numbers. Refresh updates ordinary text snapshots;
+disabling hides them from search. Agents cannot read a source until you explicitly allow access. Opted-in excerpts are sent
+to the configured agent model.
+
+The same tab can preview and import strict versioned metadata JSON. Imports stay unbound until you explicitly map a record
+to a project target; mapping only prepares a proposal. Each guarded rename needs its own confirmation. Unknown or different
+builds never imply an address mapping. Signatures, comments, and pseudocode stay untrusted reference text, not instructions,
+accepted types, or proof of a match. Metadata is re-imported rather than refreshed.
+See [Reference sources](docs/REFERENCE-SOURCES.md) for the schema, examples, and manual Ghidra export helper.
+
+Removing a source never deletes its original files. Attaching, importing, or searching references never changes project source
+or match status. Only an approved rename updates project names/source through the existing regression guards. Raw references
+and unapproved proposals stay out of project saves, rooms, and exports; approved names become ordinary project progress.
 
 ## Use it responsibly
 - Use only games that you own. decompdecomp contains no game code and supplies no ROMs.

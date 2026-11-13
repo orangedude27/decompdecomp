@@ -8,6 +8,7 @@ module's register(), which adds that part's routes to the MCP server's web app:
 - setup:    compilers and tools, helper agents and their sign-in, settings
 - life:     updates, the window, quitting
 - rooms:    decompiling together (collab.py)
+- reference_metadata: strict owner-reviewed imports and guarded rename proposals
 
 Routes check the request with app.guard (the window's secret, the host, and a header for writes) before anything
 else, run blocking work with app.call (a thread), and answer errors with app.fail.
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 @dataclass
 class App:
     """What every route module gets from server.build()."""
+
     net: RomNetwork  # the engine: projects, functions, the judge
     mcp: MCPServer  # routes are added to its web app (mcp.custom_route)
     home: Path  # decompdecomp's own folder (~/Decomp/.decomp)

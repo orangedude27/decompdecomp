@@ -25,6 +25,20 @@ CREATE TABLE IF NOT EXISTS reference_sources(
 CREATE TABLE IF NOT EXISTS reference_files(
   source_id INTEGER NOT NULL REFERENCES reference_sources(id) ON DELETE CASCADE,
   path TEXT NOT NULL, text TEXT NOT NULL, content_hash TEXT NOT NULL, PRIMARY KEY(source_id,path));
+CREATE TABLE IF NOT EXISTS metadata_imports(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL UNIQUE REFERENCES reference_sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, build TEXT, identity_status TEXT NOT NULL, record_count INTEGER NOT NULL,
+  content_hash TEXT NOT NULL, imported_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS metadata_records(
+  record_id INTEGER PRIMARY KEY AUTOINCREMENT, import_id INTEGER NOT NULL REFERENCES metadata_imports(id) ON DELETE CASCADE,
+  external_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, address TEXT, unit TEXT NOT NULL,
+  signature TEXT NOT NULL, comment TEXT NOT NULL, pseudocode TEXT NOT NULL, record_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unbound',
+  target_kind TEXT, target_id TEXT, target_name TEXT, target_unit TEXT, target_address INTEGER,
+  target_size INTEGER, target_original TEXT, target_build TEXT, target_build_kind TEXT, target_import_build TEXT,
+  old_name TEXT, proposed_name TEXT, error TEXT,
+  UNIQUE(import_id, external_id));
+CREATE INDEX IF NOT EXISTS idx_metadata_import_records ON metadata_records(import_id,record_id);
 CREATE INDEX IF NOT EXISTS idx_reference_sources_project ON reference_sources(project_id);
 CREATE TABLE IF NOT EXISTS context_versions(
   project_id INTEGER, version INTEGER, header TEXT, agent_id INTEGER, message TEXT, created_at REAL,

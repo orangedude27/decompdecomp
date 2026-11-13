@@ -68,6 +68,24 @@ def register(app: App) -> None:
         except (NetworkError, ValueError, OSError, RuntimeError) as e:
             return fail(e)
 
+    @mcp.custom_route("/api/references/agent-access", methods=["POST"])
+    async def agent_access(request: Request) -> Response:
+        if bad := guard(request, write=True):
+            return bad
+        data = await body(request)
+        if not isinstance(data.get("agent_access"), bool):
+            return fail(ValueError("agent_access must be a boolean."))
+        try:
+            return JSONResponse(
+                {
+                    "source": await call(
+                        service.agent_access, str(data.get("slug") or ""), data.get("id"), data["agent_access"]
+                    )
+                }
+            )
+        except (NetworkError, ValueError, OSError, RuntimeError) as e:
+            return fail(e)
+
     @mcp.custom_route("/api/references/remove", methods=["POST"])
     async def remove(request: Request) -> Response:
         if bad := guard(request, write=True):
