@@ -119,6 +119,7 @@ MIGRATIONS = [
     ("functions", "gone_mark", "TEXT"),                        # meta's gone (network.IN_BUILD)
     ("functions", "last_checked", "REAL"),                    # latest attempt, including failed compiles
     ("functions", "last_improved", "REAL"),                   # latest compiled attempt that improved the score
+    ("reference_sources", "agent_access", "INTEGER NOT NULL DEFAULT 0"),  # #270: explicit opt-in before model access
 ]
 
 # What the counts ask of each function's meta, copied into columns of their own: an index can hold a column, and
