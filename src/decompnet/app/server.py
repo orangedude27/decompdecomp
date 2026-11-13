@@ -26,7 +26,7 @@ from .. import hostenv, wine
 from ..network import NetworkError
 from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
-from .routes import forks, life, pages, projects, reference_metadata, references, rooms, setup, state
+from .routes import forks, life, pages, projects, reference_metadata, reference_trials, references, rooms, setup, state
 from .support import Jobs, Settings, session_options
 
 
@@ -63,6 +63,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
                 jobs.logger.error("could not save %s before exit: %s", slug, error)
         except Exception:  # shutdown must continue even if the progress store itself is damaged
             jobs.logger.exception("could not flush progress before exit")
+
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
@@ -97,6 +98,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
             except Exception:  # never stands between the user and the app
                 jobs.logger.exception("%s's console work at start failed", row["slug"])
+
     threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
     saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
 
@@ -119,6 +121,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         if options.get("picked_model"):
             now["model"] = str(options["picked_model"])
         return now
+
     manager.options_now = options_now
     manager.resume()  # helpers that were working when the app last stopped carry on (their records say which)
 
@@ -173,7 +176,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
                      guard, body, call, fail, updater=updates.Updater(before_restart, port, secret),
                      busy=busy, quit_app=quit_app)
-    for part in (pages, state, projects, references, reference_metadata, forks, setup, life, rooms):
+    for part in (pages, state, projects, references, reference_metadata, reference_trials, forks, setup, life, rooms):
         part.register(app)
 
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(allowed_hosts),

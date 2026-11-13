@@ -37,6 +37,7 @@ function releaseReferenceControls(controls, operation) {
 }
 function resetReferences() {
   referenceGeneration++; referenceSearchGeneration++;
+  if (typeof window.resetReferenceTrials === "function") window.resetReferenceTrials();
   $("referenceList").replaceChildren(); $("referenceResults").replaceChildren(); $("referenceLog").replaceChildren();
   $("referenceQuery").value = "";
   for (const operation of referenceOperations) {
@@ -87,7 +88,10 @@ async function loadReferences(existingLog = null) {
       const activeNow = activeReferenceOperation(slug, gen);
       if (activeNow) registerReferenceControls(activeNow, [...row.querySelectorAll("button"), access]);
     });
-    if (referenceOwns(slug, gen, pane) && request === referenceGeneration) await loadReferenceMetadata(slug, gen);
+    if (referenceOwns(slug, gen, pane) && request === referenceGeneration) {
+      await loadReferenceMetadata(slug, gen);
+      if (typeof window.loadReferenceTrials === "function") await window.loadReferenceTrials();
+    }
   } catch (error) { if (referenceOwns(slug, gen, pane) && request === referenceGeneration) showJobError(log, error.message); }
   finally { if (finish) finish(); }
 }

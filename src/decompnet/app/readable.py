@@ -215,7 +215,7 @@ class Readability:
                 # kept its claim (each compile renewed it) and got it back each session, 174 times in an afternoon on
                 # an Xbox game, as only a new claim counted
                 if db.execute(f"SELECT 1 FROM functions WHERE id=? AND {TODO}", (fn["id"], proj["id"])).fetchone():
-                    self.net._event(db, proj["id"], agent.id, "polish", fn["name"])
+                    self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
                 else:  # its tries are up, or it was set aside or made readable while held: the next one
                     db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
                     tried = db.execute(f"SELECT 1 WHERE ? IN ({GIVEN_UP})", (fn["name"], proj["id"])).fetchone()
@@ -227,7 +227,10 @@ class Readability:
                                 f"AND id NOT IN (SELECT function_id FROM claims) ORDER BY {ORDER} LIMIT 1",
                                 (proj["id"], proj["id"])).fetchone()
                 if fn is not None:
-                    db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
+                    db.execute(
+                        "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                        (fn["id"], agent.id, now, now + CLAIM_SECONDS),
+                    )
                     self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
         given_up = _left_as_it_is(left, "a rewrite that kept it matching") if left else ""
         if fn is None:

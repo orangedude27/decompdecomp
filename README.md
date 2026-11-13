@@ -141,11 +141,17 @@ The same tab can preview and import strict versioned metadata JSON. Imports stay
 to a project target; mapping only prepares a proposal. Each guarded rename needs its own confirmation. Unknown or different
 builds never imply an address mapping. Signatures, comments, and pseudocode stay untrusted reference text, not instructions,
 accepted types, or proof of a match. Metadata is re-imported rather than refreshed.
+The owner can prepare a source-only preview against a selected function, review edits and mappings, then choose
+**Try and accept if verified**. A trial uses the game's normal judge; high similarity is not a match. You must confirm that
+submitted code may enter normal attempts, best/matched code, progress and exports. This action is separate from agent source
+access and does not grant it.
 See [Reference sources](docs/REFERENCE-SOURCES.md) for the schema, examples, and manual Ghidra export helper.
 
 Removing a source never deletes its original files. Attaching, importing, or searching references never changes project source
-or match status. Only an approved rename updates project names/source through the existing regression guards. Raw references
-and unapproved proposals stay out of project saves, rooms, and exports; approved names become ordinary project progress.
+or match status. An approved rename uses the existing regression guards. Explicit trials temporarily compile the reviewed
+candidate; a miss restores the source tree but may record an ordinary attempt or better best source. Only the normal judge can
+mark a match. Raw references and unapproved proposals stay out of project saves, rooms, and exports; approved names and the
+explicitly consented trial code can become ordinary project progress.
 
 ## Use it responsibly
 - Use only games that you own. decompdecomp contains no game code and supplies no ROMs.

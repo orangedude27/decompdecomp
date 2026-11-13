@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import struct
 import subprocess
@@ -61,6 +62,8 @@ from ..scoring import percent_text
 from ..textedit import replace_once
 
 _REPO = re.compile(r"^(https://(github\.com|gitlab\.com|codeberg\.org|git\.[\w.-]+)/[\w.-]+/[\w.-]+?)(\.git)?/?$")
+
+
 # A match has to come from C/C++: no inline assembly, asm functions, asm includes or embedded binaries.
 def _path_glob(glob: str) -> str:
     """A shell-style pattern an agent wrote, as pathlib takes it: `**` only as a whole path component
@@ -90,12 +93,12 @@ def _strip_comments(code: str) -> str:
     return _REGVAR.sub(" ", _LINKAGE_DECL.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S)))
 
 
-def _rewrite(path: Path, text: str) -> None:
+def _rewrite(path: Path, text: str, *, strict_reference: bool = False) -> None:
     """`path.write_text(text, encoding="utf-8")`, the same bytes, writing only from the first 4 KB block that differs.
     A compile writes the agent's version of a unit's source and an undo writes the original back: a dtk unit can be
     a megabyte, and only the part from the changed function on is new. An unchanged file is only touched, so a build
     still sees it as new."""
-    data = text.replace("\n", os.linesep).encode("utf-8")  # as text mode writes it
+    data = text.encode("utf-8") if strict_reference else text.replace("\n", os.linesep).encode("utf-8")
     try:
         with open(path, "r+b") as f:
             old = f.read()
@@ -2960,21 +2963,65 @@ class ForkEngine:
                for r in rows]
         return "\n".join(out) or "none"
 
-    def attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                quiet: int | None = None, comment: bool = False) -> dict:
+    def attempt(
+        self,
+        agent: Agent,
+        slug: str,
+        function: str,
+        source: str,
+        keep: bool = True,
+        prelude: str = "",
+        quiet: int | None = None,
+        comment: bool = False,
+        strict_reference: bool = False,
+        trial_guard=None,
+        reference_token: str | None = None,
+    ) -> dict:
         """`keep`: whether a version that doesn't match stays in the source file (an agent's work in progress) or
         is undone and kept only as the function's best attempt (autopilot's drafts). `prelude`: (decompdecomp's own
         tries) type definitions the code needs, placed after the file's includes. `quiet`: (the permuter's
         variants) recorded only when better than this score. A try that isn't kept holds the function only while
         it builds (twins' tries come unclaimed: a 30-minute claim each kept agents off them, then counted as given up).
         `comment`: (polishing) the comment right above the definition goes into the file, in place of the file's."""
-        held = None if keep else self._hold_for_try(slug, function, agent)
+        if strict_reference and keep:
+            raise NetworkError("reference trials require a guarded, non-keeping attempt")
+        if strict_reference and reference_token is None:
+            reference_token = secrets.token_urlsafe(32)
+        held = (
+            None
+            if keep
+            else self._hold_for_try(slug, function, agent, reference_token=reference_token, trial_guard=trial_guard)
+        )
+        if strict_reference and held is None:
+            raise NetworkError("reference trial requires an open, unclaimed function")
+        if strict_reference and trial_guard is None:
+            with self.net.store.tx() as db:
+                db.execute(
+                    "DELETE FROM claims WHERE function_id=? AND agent_id=? AND reference_token IS ?",
+                    (held, agent.id, reference_token),
+                )
+            raise NetworkError("reference trials require a guarded, non-keeping attempt")
         try:
-            res = self._attempt(agent, slug, function, source, keep, prelude, quiet, comment)
+            res = self._attempt(
+                agent,
+                slug,
+                function,
+                source,
+                keep,
+                prelude,
+                quiet,
+                comment,
+                strict_reference,
+                trial_guard,
+                reference_token,
+            )
         finally:
             if held is not None:
                 with self.net.store.tx() as db:
-                    db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (held, agent.id))
+                    db.execute(
+                        "DELETE FROM claims WHERE function_id=? AND agent_id=? AND reference_token IS ?",
+                        (held, agent.id, reference_token),
+                    )
         link = self.net.links.get(slug)
         if link is None or res["score"] is None:
             return res
@@ -2997,7 +3044,9 @@ class ForkEngine:
                 threading.Thread(target=self._report_best, args=(link, agent, name, source, res["score"]), daemon=True).start()
         return res
 
-    def _hold_for_try(self, slug: str, function: str, agent: Agent) -> int | None:
+    def _hold_for_try(
+        self, slug: str, function: str, agent: Agent, *, reference_token: str | None = None, trial_guard=None
+    ) -> int | None:
         """Claim an open function nobody holds for one quick try; its id, or None (held already, or matched)."""
         fn = self._fn(slug, function)
         now = time.time()
@@ -3005,7 +3054,12 @@ class ForkEngine:
             self.net._expire_claims(db)
             if fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return None
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
+            db.execute(
+                "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at,reference_token) VALUES(?,?,?,?,?)",
+                (fn["id"], agent.id, now, now + 300, reference_token),
+            )
+            if reference_token is not None and trial_guard is not None:
+                trial_guard(db, {"phase": "claim", "fn": fn, "reference_token": reference_token})
         return fn["id"]
 
     @staticmethod
@@ -3022,8 +3076,18 @@ class ForkEngine:
         except NetworkError:
             pass
 
-    def _place(self, proj, fp: ForkProject, unit, fn, source: str, names: list[str], comment: bool = False,
-               prelude: str = "") -> tuple[str, str, Path, str]:
+    def _place(
+        self,
+        proj,
+        fp: ForkProject,
+        unit,
+        fn,
+        source: str,
+        names: list[str],
+        comment: bool = False,
+        prelude: str = "",
+        strict_reference: bool = False,
+    ) -> tuple[str, str, Path, str]:
         """`source`'s definition written into its unit's source file as it is now: (the code, the file after,
         the file, the file before)."""
         _, span = self._find(source, names)
@@ -3040,8 +3104,18 @@ class ForkEngine:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
         path = fp.safe_path(unit.source, write=True)
         try:
-            before = path.read_text(errors="replace", encoding="utf-8")
-        except OSError:
+            if strict_reference:
+                with path.open("r", encoding="utf-8", newline="") as stream:
+                    before = stream.read()
+            else:
+                before = path.read_text(errors="replace", encoding="utf-8")
+        except FileNotFoundError:
+            if strict_reference:
+                raise NetworkError("target source file is missing; finish project source setup first") from None
+            before = ""
+        except (OSError, UnicodeError) as e:
+            if strict_reference:
+                raise NetworkError("target source file is not readable UTF-8") from e
             before = ""
         includes, before_lines, after_lines = _around(source, span, before, unit.source)
         hit, old_span = self._find(before, names)
@@ -3083,21 +3157,41 @@ class ForkEngine:
         after = _with_includes(after, includes, prelude)
         return code, after, path, before
 
-    def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                 quiet: int | None = None, comment: bool = False) -> dict:
+    def _attempt(
+        self,
+        agent: Agent,
+        slug: str,
+        function: str,
+        source: str,
+        keep: bool = True,
+        prelude: str = "",
+        quiet: int | None = None,
+        comment: bool = False,
+        strict_reference: bool = False,
+        trial_guard=None,
+        reference_token: str | None = None,
+    ) -> dict:
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, function)
         meta = self._meta(fn)
-        if len(source) > 64 * 1024:
-            raise NetworkError("source too large")
-        if _CHEAT.search(_strip_comments(source)):
+        if len(source.encode("utf-8")) > 64 * 1024 or (
+            strict_reference and (len(source.encode("utf-8")) > 48 * 1024 or len(prelude.encode("utf-8")) > 16 * 1024)
+        ):
+            raise NetworkError("source or prelude too large")
+        if _CHEAT.search(_strip_comments(source)) or (strict_reference and _CHEAT.search(_strip_comments(prelude))):
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed: a match has to come from C/C++")
         names = self._names(meta, fn)
         _, span = self._find(source, names)
         console = consoles.get(cfg.get("platform"))
         version = (fp.manifest or {}).get("version") or cfg.get("version")
         structor = None
-        if span is None and console.names_structors and not meta.get("demangled") and "::" in (meta.get("real") or "::"):
+        if (
+            span is None
+            and not strict_reference
+            and console.names_structors
+            and not meta.get("demangled")
+            and "::" in (meta.get("real") or "::")
+        ):
             # a constructor or destructor of a class the agent named (CFoo::~CFoo for func_004A86D0) becomes the
             # function's real name below, which the build pairs with the original: a class's constructor and
             # destructor are at two addresses, and can't both be named after the class. One named so before (a
@@ -3112,23 +3206,54 @@ class ForkEngine:
         if not unit.source:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
         symbol = meta.get("symbol") or fn["name"]
-        linked = unit.complete and fp.linkable()  # the game is built from this file: changes must keep it identical
-        with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
-            code, after, path, before = self._place(proj, fp, unit, fn, source, names, comment, prelude)
+        linked = unit.complete and fp.linkable()
+        source_state = {}
+        cleanup = ExitStack()
+        if strict_reference:
+            from ..reference_trials import _trial_source_cleanup
+
+            cleanup = _trial_source_cleanup(self.net, fn, agent, source_state)
+        with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name), cleanup:
+            code, after, path, before = self._place(
+                proj, fp, unit, fn, source, names, comment, prelude, strict_reference
+            )
+            if strict_reference:
+                source_state.update(path=path, before=before, after=after, code=code, applied=False)
             with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
                 self.net._expire_claims(db)
-                claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
-                if claim is not None and claim["agent_id"] != agent.id:
-                    raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
+                claim = db.execute(
+                    "SELECT agent_id,expires_at,reference_token FROM claims WHERE function_id=?", (fn["id"],)
+                ).fetchone()
                 now = time.time()
-                if claim is None and fn["status"] != "matched":
-                    db.execute("INSERT INTO claims VALUES(?,?,?,?)",
-                               (fn["id"], agent.id, now, now + self.net.claim_ttl))
+                if strict_reference:
+                    if (
+                        claim is None
+                        or claim["agent_id"] != agent.id
+                        or claim["reference_token"] != reference_token
+                        or claim["expires_at"] <= now
+                    ):
+                        raise NetworkError("reference trial no longer owns its active claim")
+                    changed = db.execute(
+                        "UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=? "
+                        "AND reference_token=? AND expires_at>?",
+                        (now + self.net.claim_ttl, fn["id"], agent.id, reference_token, now),
+                    ).rowcount
+                    if changed != 1:
+                        raise NetworkError("reference trial no longer owns its active claim")
+                elif claim is not None and claim["agent_id"] != agent.id:
+                    raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
+                elif claim is None and fn["status"] != "matched":
+                    db.execute(
+                        "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                        (fn["id"], agent.id, now, now + self.net.claim_ttl),
+                    )
                 elif claim is not None:
                     db.execute("UPDATE claims SET expires_at=? WHERE function_id=?",
                                (now + self.net.claim_ttl, fn["id"]))
             # What matches in the file as it is now is what this change must keep (not the database's idea of it,
             # which a change outside decompdecomp or a different measurement can leave behind)
+            if strict_reference and trial_guard is not None:
+                trial_guard("before_baseline", {"fn": fn, "project": proj, "unit": unit, "path": path, "before": before, "after": after})
             scores, builds = self._baseline(proj, fp, unit, before)
             held = self._held(proj, unit.name, before)
             if scores is not None:
@@ -3140,6 +3265,8 @@ class ForkEngine:
                 protected = {n for n, pct in (self._last_scores(proj, unit) or {}).items()
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
+            if strict_reference and was_matched:
+                raise NetworkError("target already matches the project source; reference trials require open work")
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
             agents_try = keep and quiet is None and not was_matched
@@ -3169,7 +3296,11 @@ class ForkEngine:
                         p.write_text(t, encoding="utf-8")
 
             committed = [unit.source, *(p.relative_to(fp.root).as_posix() for p in renamed)]
-            _rewrite(path, after)
+            if trial_guard is not None:
+                trial_guard("before_write", {"fn": fn, "project": proj, "unit": unit, "path": path, "before": before, "after": after})
+            if strict_reference:
+                source_state["applied"] = True
+            _rewrite(path, after, strict_reference=strict_reference)
 
             def remembered(text: str, score: int | None, kept: bool = True) -> str:
                 """A result as repeat_of gives it back later (agents' tries only), plus the note when this variant
@@ -3180,8 +3311,31 @@ class ForkEngine:
                     self.net.remember_compile(key, agent, fn, text, score)
                 return text + self.net.same_score_note(fn["id"], agent.id, score, code)
 
+            def trial_record(*args, **kwargs):
+                if strict_reference and trial_guard is not None:
+                    trial_guard(
+                        "before_record", {"fn": fn, "project": proj, "unit": unit, "path": path, "before": before, "after": after}
+                    )
+                    kwargs["trial_guard"] = trial_guard
+                recorded = self.net._record(*args, **kwargs)
+                if strict_reference and kwargs.get("matched") is True:
+                    source_state["accepted"] = True
+                return recorded
+
             def undo() -> None:
-                _rewrite(path, before)
+                try:
+                    if strict_reference:
+                        still_ours = path.read_bytes().decode("utf-8") == after
+                    else:
+                        still_ours = path.read_text(errors="replace", encoding="utf-8") == after
+                except (OSError, UnicodeError):
+                    still_ours = False
+                if strict_reference and not still_ours:
+                    unname()
+                    return
+                _rewrite(path, before, strict_reference=strict_reference)
+                if strict_reference:
+                    source_state["applied"] = False
                 unname()
                 if (proj["id"], unit.name) in self._trials and scores is not None and not renamed:
                     self._trials[(proj["id"], unit.name)] = True  # (a run of tries: built once, at its end)
@@ -3189,13 +3343,18 @@ class ForkEngine:
                 if self._build_unit(proj, fp, unit)[0] and scores is not None:
                     self._keep_scores(proj, unit, before, scores)
 
+            if strict_reference:
+                source_state["undo"] = undo
             ok, log = self._build_unit(proj, fp, unit)
             if not ok and (broken := fp.build_problem()) is not None:
                 # the build itself is broken, not the agent's code: nothing recorded or counted, and the project
                 # is set up again in the background (one project spent five compiles on a build.ninja whose python
                 # was in another home, then the sessions quit)
-                _rewrite(path, before)
-                unname()
+                if strict_reference:
+                    undo()
+                else:
+                    _rewrite(path, before)
+                    unname()
                 threading.Thread(target=self.preflight, args=(slug,), daemon=True, name=f"preflight-{slug}").start()
                 return {"text": f"❌ The project's build is broken, not your code: {broken}. Your change was undone, "
                                 "and nothing was recorded or counted. decompdecomp is setting the project up again; "
@@ -3204,11 +3363,17 @@ class ForkEngine:
             if not ok:
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, None, code, 0)
+                    trial_record(fn, agent, None, code, 0)
                 why = "" if builds else ("\n(The file didn't build before your change either, so the error may be in "
                                          "other code of the file: fix that with edit_file.)")
                 return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}", "score": None,
                         "matched": False}
+            if strict_reference and trial_guard is not None:
+                try:
+                    trial_guard("after_build", {"fn": fn, "project": proj, "unit": unit, "path": path, "before": before, "after": after})
+                except Exception:
+                    undo()
+                    raise
             try:
                 d = fp.diff(unit, symbol)
             except (ObjdiffError, ForkError) as e:
@@ -3227,7 +3392,7 @@ class ForkEngine:
                 if d.match_percent is not None:
                     own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
                 if quiet is None:  # an attempt, never the best: release puts the best back in the file
-                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False)
+                    trial_record(fn, agent, own, code, 0, compiled=True, best=False)
                 listed = ", ".join(broken[:8])
                 if own is None:
                     text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. Check you "
@@ -3250,37 +3415,53 @@ class ForkEngine:
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, None, code, 0, compiled=True)
+                    trial_record(fn, agent, None, code, 0, compiled=True)
                 return {"text": f"❌ REJECTED and undone: {unit.source} is linked into the game, and with your change "
                                 f"the game no longer builds byte for byte:\n{_tail(ok[1])}", "score": None,
                         "matched": False}
+            if strict_reference and trial_guard is not None:
+                try:
+                    trial_guard(
+                        "before_record",
+                        {"fn": fn, "project": proj, "unit": unit, "path": path, "before": before, "after": after, "matched": d.matched},
+                    )
+                except Exception:
+                    undo()
+                    raise
             pct = d.match_percent if d.match_percent is not None else 0.0
             score = max(1, len(d.literals)) if d.literals else scaled(pct, fn["n_insns"])
             matched = d.matched
             if not matched and not keep and not was_matched:  # tried, not kept: the file stays as it was
                 undo()
                 if quiet is None or score < quiet:
-                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                    trial_record(fn, agent, score, code, 0, compiled=True)
                 return {"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
             best = fn["best_score"]
-            if (not matched and not was_matched and d.match_percent is not None and best is not None
-                    and fn["best_source"] and score > best):
+            if (
+                not matched
+                and not was_matched
+                and d.match_percent is not None
+                and best is not None
+                and fn["best_source"]
+                and score > best
+            ):
                 # worse than the best so far: the file keeps what it had, so it never ends on a worse variant than
                 # the one the notes and the brief call the best (an agent found its 91.8% try there, not its 92.3%)
                 undo()
                 if quiet is None:
-                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                    trial_record(fn, agent, score, code, 0, compiled=True)
                 stall = self.net.stall_note(fn["id"], agent.id)
                 text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
                                   f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
                                   f"{d.render()}", score)
                 return {"text": text + stall, "score": score, "matched": False, "percent": pct}
-            self._keep_scores(proj, unit, after, d.unit_scores)
-            self._hold(fn, code if d.literals else None)
+            if not strict_reference:
+                self._keep_scores(proj, unit, after, d.unit_scores)
+                self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
                 if quiet is None:  # a polishing helper's compiles count too (not as a match)
-                    self.net._record(fn, agent, score, code, 0)
+                    trial_record(fn, agent, score, code, 0)
                 if not matched:
                     undo()
                     why = "loads other constants" if d.literals else f"is {percent_text(pct)}"
@@ -3291,7 +3472,9 @@ class ForkEngine:
                                                         f"Edited by {agent.name} with decompdecomp.")
                 return {"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True}
-            self.net._record(fn, agent, score, code, 0, matched=matched)
+            trial_record(fn, agent, score, code, 0, matched=matched)
+            if strict_reference:
+                self._keep_scores(proj, unit, after, d.unit_scores)
             self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
                                via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)
@@ -3572,7 +3755,10 @@ class ForkEngine:
             fn = db.execute("SELECT * FROM functions WHERE id=?", (fid,)).fetchone()
             if fn is None or fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fid,)).fetchone():
                 return "skip"
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
+            db.execute(
+                "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                (fid, agent.id, now, now + 300),
+            )
         try:
             _, fp, cfg = self.get(proj["slug"])
             unit = fp.unit(fn["unit"])

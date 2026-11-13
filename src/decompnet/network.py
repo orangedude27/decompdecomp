@@ -72,7 +72,11 @@ NOTES_FOUND = 20  # search_notes' answer at most
 # found "nothing left to claim" among exactly the ten functions their names gave up on in earlier runs, while a new
 # Opus helper claimed at once. After that the function still comes to it last.
 SELF_RELEASE_WINDOW = RELEASE_COOLDOWN
-MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+MACHINE_AGENTS = (
+    "autopilot",
+    "permuter",
+    "reference-trial",
+)  # decompdecomp's own workers: their claims never mean "given up on"
 # "No C makes this" (release_function's not_c): on a DS game five to seven agents in turn took each piece of another
 # function, found it couldn't be C and gave it back, saying so in a note that changed nothing. Once this many agents,
 # of this many models (one model's blind spot isn't proof), say so, it's set aside: no one is handed it again, and
@@ -176,7 +180,6 @@ CLAIM_ORDERS = {
 
 class NetworkError(Exception):
     """An error meant to be shown to the agent as-is."""
-
 
 
 def _no_better(scores: list[int | None]) -> int:
@@ -326,6 +329,7 @@ def set_aside(fn) -> dict:
     why = meta.get("asm_code") or (f"the same code as {meta['asm_twin']}, a matched assembly function"
                                    if meta.get("asm_twin") else "hand-written assembly")
     return {"set_aside": why, "not_c": "not_c" in meta}
+
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -480,7 +484,12 @@ class Network:
 
     def _expire_claims(self, db) -> None:
         now = time.time()
-        own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
+        own = {
+            r["id"]
+            for r in db.execute(
+                f"SELECT id FROM agents WHERE name IN ({','.join('?' for _ in MACHINE_AGENTS)})", MACHINE_AGENTS
+            )
+        }
         for row in db.execute("SELECT c.function_id, c.agent_id, f.project_id, f.name FROM claims c "
                               "JOIN functions f ON f.id=c.function_id WHERE c.expires_at < ?", (now,)).fetchall():
             if row["agent_id"] in own:  # decompdecomp's own tries (cut short by a restart): nobody gave up on it
@@ -693,8 +702,9 @@ class Network:
                             f"({', '.join(models)}) found no C makes it and nothing else is left: set it aside in its "
                             f"panel, or let an agent of another model look")
 
-    def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None,
-                  strategy: str = "easiest"):
+    def claim_row(
+        self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest"
+    ):
         """Claim (or renew) a function and return its row, or None when nothing is left."""
         proj = self._project(project) if (project or not function) else None
         if not function:  # the owner's order wins over the agent's, but a function asked for by name still comes
@@ -725,7 +735,10 @@ class Network:
                 if other is not None:
                     raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(other['agent_id'])} "
                                        f"for another {int(other['expires_at'] - now) // 60} min")
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
+                db.execute(
+                    "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                    (fn["id"], agent.id, now, now + self.claim_ttl),
+                )
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
             else:
                 route = self._route(db, proj["id"], agent, now)
@@ -766,7 +779,10 @@ class Network:
                     fn = db.execute(query, args | {"weak": False}).fetchone()
                 if fn is None:
                     return None
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
+                db.execute(
+                    "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                    (fn["id"], agent.id, now, now + self.claim_ttl),
+                )
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
             # a wait that's over has had its turn at the front once it's claimed
             db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
@@ -941,7 +957,12 @@ class Network:
         keeps it off those functions (SELF_RELEASE_WINDOW). Returns the functions released."""
         now, freed = time.time(), []
         with self.store.tx() as db:
-            own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
+            own = {
+                r["id"]
+                for r in db.execute(
+                    f"SELECT id FROM agents WHERE name IN ({','.join('?' for _ in MACHINE_AGENTS)})", MACHINE_AGENTS
+                )
+            }
             for aid in agent_ids:
                 rows = db.execute("SELECT f.id, f.project_id, f.name FROM claims c JOIN functions f ON f.id=c.function_id "
                                   "WHERE c.agent_id=?", (aid,)).fetchall()
@@ -961,8 +982,14 @@ class Network:
         """When the app starts: none of its own helpers (origin 'local') is running yet, so whatever they hold is left
         over from the last run. Agents that run elsewhere (a room's members, an agent using the MCP server) may still
         be working: theirs keep the CLAIM_TTL rule; so do the user's own claims and decompdecomp's workers'."""
-        ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN (?, ?, ?)",
-                                               "you", *MACHINE_AGENTS)]
+        excluded = ("you", *MACHINE_AGENTS)
+        placeholders = ",".join("?" for _ in excluded)
+        ids = [
+            r["id"]
+            for r in self.store.all(
+                f"SELECT id FROM agents WHERE origin='local' AND name NOT IN ({placeholders})", *excluded
+            )
+        ]
         return self.release_stopped(ids, why)
 
     def get_function(self, function: str, project: str | None = None, agent: Agent | None = None) -> str:
@@ -1047,7 +1074,10 @@ class Network:
                     held = db.execute("SELECT 1 FROM claims WHERE agent_id=?", (agent.id,)).fetchone()
                     if held:
                         raise NetworkError("you hold another claim; release it before working on a different function")
-                    db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
+                    db.execute(
+                        "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                        (fn["id"], agent.id, now, now + self.claim_ttl),
+                    )
                     self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
                 elif claim["agent_id"] != agent.id:
                     raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(claim['agent_id'])}")
@@ -1230,13 +1260,38 @@ class Network:
         return (f"\nWaiting for this one: {', '.join(r['name'] for r in rows)}. They come first in the queue now; "
                 f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
-    def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
-                compiled: bool | None = None, via: str = "agent", best: bool = True):
+    def _record(
+        self,
+        fn,
+        agent: Agent,
+        score: int | None,
+        source: str,
+        ctx_version: int,
+        matched: bool = False,
+        compiled: bool | None = None,
+        via: str = "agent",
+        best: bool = True,
+        *,
+        trial_guard=None,
+    ):
         """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
         it never becomes the best that briefs offer and a release puts back."""
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         with self.store.tx() as db:
+            if trial_guard is not None:
+                trial_guard(
+                    db,
+                    {
+                        "function_id": fn["id"],
+                        "project_id": fn["project_id"],
+                        "agent_id": agent.id,
+                        "score": score,
+                        "source": source,
+                        "matched": matched,
+                        "context_version": ctx_version,
+                    },
+                )
             db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
                        "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
             db.execute("UPDATE functions SET attempts=attempts+1,last_checked=? WHERE id=?", (now, fn["id"]))

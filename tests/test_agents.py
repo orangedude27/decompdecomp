@@ -686,12 +686,16 @@ def test_helpers_are_records_that_outlive_the_app(tmp_path, quiet):
     m.stop(other)  # you stopped this one
     helper, _ = net.local_agent("claude-opus-1")
     with net.store.tx() as db:
-        db.execute("INSERT INTO claims VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)", (helper.id, 0, 1e12))
-    later = agents.Manager(net, tmp_path, URL)  # the app closed without a word (it crashed), and starts again
+        db.execute(
+            "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) "
+            "VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)",
+            (helper.id, 0, 1e12),
+        )
+    later = agents.Manager(net, tmp_path, URL)
     s = later.sessions[sid]
     assert (s.agent_name, s.state, s.stopped_by) == ("claude-opus-1", "stopped", agents.BY_QUIT)
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
-    assert later.resume() == [sid]  # what the app stopped carries on, what you stopped doesn't
+    assert later.resume() == [sid]
     assert later.sessions[sid].state == "starting" and later.sessions[other].state == "stopped"
     later.stop(sid)
     assert later.sessions[sid].why == "stopped by you"
@@ -788,9 +792,9 @@ def test_a_chosen_model_survives_resume_and_start_again(kind, tmp_path, monkeypa
     later = agents.Manager(net, tmp_path, URL)
     assert later.resume() == [sid]
     assert _command_model(later, sid, kind, tmp_path) == "chosen-model"
-    later.stop(sid)  # stopped by you
+    later.stop(sid)
     monkeypatch.setattr(agent, "config_model", lambda: "another-default")
-    later.restart(sid)  # Start again
+    later.restart(sid)
     assert _command_model(later, sid, kind, tmp_path) == "chosen-model"
 
 
@@ -928,7 +932,11 @@ def test_stopping_a_helper_frees_its_function_at_once(tmp_path, quiet):
     (sid,) = m.start("api", "game", 1, {"model": "deepseek-chat", "provider_name": "DeepSeek"})
     helper, _ = net.local_agent(m.sessions[sid].agent_name)
     with net.store.tx() as db:
-        db.execute("INSERT INTO claims VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)", (helper.id, 0, 1e12))
+        db.execute(
+            "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) "
+            "VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)",
+            (helper.id, 0, 1e12),
+        )
     m.stop(sid)
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
     assert net.store.one("SELECT stopped_by FROM helpers WHERE id=?", sid)["stopped_by"] == agents.BY_YOU
@@ -948,7 +956,11 @@ def test_removing_a_room_helper_releases_its_function_at_the_host(tmp_path, quie
     (sid,) = m.start("api", "game", 1, {"model": "deepseek-chat", "provider_name": "DeepSeek"})
     helper, _ = net.local_agent(m.sessions[sid].agent_name)
     with net.store.tx() as db:
-        db.execute("INSERT INTO claims VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)", (helper.id, 0, 1e12))
+        db.execute(
+            "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) "
+            "VALUES((SELECT id FROM functions WHERE name='f0'),?,?,?)",
+            (helper.id, 0, 1e12),
+        )
     host_agent, _ = host.local_agent(f"alex.{helper.name}")
     host.claim_row(host_agent, "game", "f0")
 
@@ -1281,7 +1293,6 @@ def test_the_api_helper_sends_a_thinking_models_reasoning_back(tmp_path, monkeyp
     assert turns[0]["reasoning_content"] == "The smallest function first." and "reasoning_content" not in turns[1]
 
 
-
 def test_the_api_helper_asks_again_after_a_dropped_request_keeping_its_conversation(tmp_path, monkeypatch):
     """#154: behind a laggy gateway, one 502 or dropped connection ended the session, and the next one started the
     function over, again and again. They're asked again in place, after a wait, with the same conversation."""
@@ -1312,6 +1323,7 @@ def test_the_api_helper_asks_again_after_a_dropped_request_keeping_its_conversat
     m._run(s)
     assert sent[1] == sent[2] == sent[3] and len(sent[1]) > len(sent[0])
     assert s.stop.waits[:2] == [10, 20] and s.runs == 1
+
 
 def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     """The Agents view says what each model cost on a game, to tell which models to run more of: cheapest per match

@@ -261,7 +261,10 @@ class Permuter:
             self.net._expire_claims(db)
             if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return False
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + SECONDS + HOLD_SPARE_SECONDS))
+            db.execute(
+                "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                (fn["id"], agent.id, now, now + SECONDS + HOLD_SPARE_SECONDS),
+            )
             db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
         return True
 

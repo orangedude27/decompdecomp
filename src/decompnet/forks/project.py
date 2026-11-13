@@ -258,10 +258,11 @@ def _query_outputs(text: str) -> set[str]:
 
 
 class ForkProject:
-    def __init__(self, root: Path, platform: str = ""):
+    def __init__(self, root: Path, platform: str = "", *, read_only: bool = False):
         self.root = Path(root)
         self.platform = platform
-        (self.root / STATE).mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            (self.root / STATE).mkdir(parents=True, exist_ok=True)
 
     def _game_consoles(self):
         """The named console, or each console's file preparation when a public project's platform is unknown."""

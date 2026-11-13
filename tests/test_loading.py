@@ -109,7 +109,10 @@ def test_the_live_feed_takes_the_writers_lock_only_when_a_claim_ran_out(tmp_path
     real = net._expire_claims
     monkeypatch.setattr(net, "_expire_claims", lambda db: expired.append(1) or real(db))
     with net.store.tx() as db:
-        db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, time.time(), time.time() + 600))
+        db.execute(
+            "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+            (fid, agent.id, time.time(), time.time() + 600),
+        )
     assert len(net.live("game")["claims"]) == 1 and not expired
     with net.store.tx() as db:
         db.execute("UPDATE claims SET expires_at=?", (time.time() - 1,))

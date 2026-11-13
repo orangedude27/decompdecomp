@@ -181,7 +181,10 @@ def test_decomp_wtfs_own_tries_leave_no_claim_behind(fork):
     assert not res["matched"]
     assert net.store.one("SELECT 1 FROM claims WHERE function_id=?", fn["id"]) is None
     with net.store.tx() as db:  # one cut short by a restart runs out: nobody gave up on the function
-        db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], autopilot.id, 0, 1))
+        db.execute(
+            "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+            (fn["id"], autopilot.id, 0, 1),
+        )
         net._expire_claims(db)
     assert net.store.one("SELECT abandons FROM functions WHERE id=?", fn["id"])["abandons"] == fn["abandons"]
 

@@ -127,13 +127,13 @@ class AutopilotMixin:
         if any(c["status"] in ("checking", "waiting") for c in self.cfg(proj).get("range_checks", [])):
             self.rangechecks.recheck(proj["slug"])  # a neighbour of a suggested range may have spoken
 
-    def try_quietly(self, agent, proj, fn, source: str) -> dict:
+    def try_quietly(self, agent, proj, fn, source: str, *, trial_guard=None, reference_token=None) -> dict:
         """Judge one candidate for a function nobody holds (autopilot's tries): held only while it compiles,
         recorded as an attempt like any other. {"matched", "score"}."""
         with self.progress.judging(proj["slug"]):
-            return self._try_quietly(agent, proj, fn, source)
+            return self._try_quietly(agent, proj, fn, source, trial_guard=trial_guard, reference_token=reference_token)
 
-    def _try_quietly(self, agent, proj, fn, source: str) -> dict:
+    def _try_quietly(self, agent, proj, fn, source: str, *, trial_guard=None, reference_token=None) -> dict:
         fn = self.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
@@ -142,9 +142,18 @@ class AutopilotMixin:
             self._expire_claims(db)
             if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 raise NetworkError(f"{fn['name']} is claimed")
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + 300))
+            db.execute(
+                "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at,reference_token) VALUES(?,?,?,?,?)",
+                (fn["id"], agent.id, now, now + 300, reference_token),
+            )
+            if reference_token is not None and trial_guard is not None:
+                trial_guard(db, {"phase": "claim", "fn": fn, "project": proj, "reference_token": reference_token})
         try:
+            if trial_guard is not None:
+                trial_guard("admitted", {"fn": fn, "project": proj})
             ctx = self._context(proj["id"], fn["unit"])
+            if trial_guard is not None:
+                trial_guard("before_compile", {"fn": fn, "project": proj, "context": ctx})
             result = self._compile(proj, ctx["header"], source, fn)
             if not result.ok:
                 return {"matched": False, "score": None}
@@ -154,11 +163,16 @@ class AutopilotMixin:
             d = scoring.diff(self._target_obj(fn, proj), cand)
             if verdict is not None:
                 d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
-            self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
+            if trial_guard is not None:
+                trial_guard("after_build", {"fn": fn, "project": proj, "context": ctx})
+            self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, trial_guard=trial_guard)
             return {"matched": d.bytes_match, "score": d.score}
         finally:
             with self.store.tx() as db:
-                db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
+                db.execute(
+                    "DELETE FROM claims WHERE function_id=? AND agent_id=? AND reference_token IS ?",
+                    (fn["id"], agent.id, reference_token),
+                )
 
     def _autopilot_one(self, agent, proj, fid: int) -> str:
         """match | near | far | fail | skip, for one function's draft. A draft autopilot already judged with the same
@@ -170,7 +184,10 @@ class AutopilotMixin:
             fn = db.execute("SELECT * FROM functions WHERE id=?", (fid,)).fetchone()
             if fn is None or fn["status"] != "open" or db.execute("SELECT 1 FROM claims WHERE function_id=?", (fid,)).fetchone():
                 return "skip"
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
+            db.execute(
+                "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                (fid, agent.id, now, now + 300),
+            )
         try:
             self._seed_for(fn, proj)  # the readable draft, for the agents that come after
             with self.progress.judging(proj["slug"]):

@@ -100,7 +100,10 @@ class JudgeMixin:
                 "ORDER BY ABS(COALESCE(f.vram, 0) - ?), f.id LIMIT ?",
                 (proj["id"], BATCH_INSNS, first["unit"], first["vram"] or 0, n)).fetchall()
             for r in rows:
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (r["id"], agent.id, now, now + self.claim_ttl))
+                db.execute(
+                    "INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(?,?,?,?)",
+                    (r["id"], agent.id, now, now + self.claim_ttl),
+                )
                 self._event(db, proj["id"], agent.id, "claim", r["name"])
         return rows
 
@@ -139,7 +142,7 @@ class JudgeMixin:
         with self.progress.judging(slug):
             return self._attempt(agent, function, source, project)
 
-    def _record(self, fn, *args, **kwargs):
+    def _record(self, fn, *args, trial_guard=None, **kwargs):
         slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         with self.progress._project_lock(slug):
             # attempt()'s judging block already read progress just before this record; a second full read here made
@@ -147,7 +150,7 @@ class JudgeMixin:
             if not self.progress.applying and not getattr(self.progress.local, "judging", None):
                 self.progress.sync(slug, force=True)
             self.progress.check_result()
-            return super()._record(fn, *args, **kwargs)
+            return super()._record(fn, *args, trial_guard=trial_guard, **kwargs)
 
     def _attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         self._yield_autopilot(function, project)

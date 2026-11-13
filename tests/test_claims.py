@@ -3,11 +3,38 @@ the same size the one in the file closest to done. A crowd of agents must not sp
 leftovers around (Mario Party 6: 16 agents, one match, on 326 big functions released again and again)."""
 
 import json
+import sqlite3
 
 import pytest
 
 from decompnet import network
 from decompnet.app.engine import RomNetwork
+from decompnet.store import Store
+
+
+def test_old_claim_table_migrates_reference_token_as_null(tmp_path):
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE claims(function_id INTEGER PRIMARY KEY, agent_id INTEGER NOT NULL, "
+            "claimed_at REAL, expires_at REAL)"
+        )
+        db.execute("INSERT INTO claims VALUES(1,2,3,4)")
+    store = Store(path)
+    try:
+        claim = store.one(
+            "SELECT function_id,agent_id,claimed_at,expires_at,reference_token FROM claims WHERE function_id=1"
+        )
+        assert claim is not None
+        assert (
+            claim["function_id"],
+            claim["agent_id"],
+            claim["claimed_at"],
+            claim["expires_at"],
+            claim["reference_token"],
+        ) == (1, 2, 3.0, 4.0, None)
+    finally:
+        store.conn.close()
 
 
 def _ordered_game(tmp_path, kind: str, order: str = ""):

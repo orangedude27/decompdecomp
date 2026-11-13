@@ -39,6 +39,13 @@ def test_reference_sources_ui_covers_actions_search_and_project_races():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_reference_trials_preview_consent_and_judged_run_ui():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_reference_trials.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_reference_metadata_preview_import_mapping_and_guarded_apply_ui():
     if NODE is None:
         pytest.skip("needs node to run the GUI scripts")

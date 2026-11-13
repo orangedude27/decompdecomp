@@ -395,6 +395,28 @@
           <button id="referenceSearchButton" type="submit">Search</button>
         </form>
         <div id="referenceResults" aria-live="polite"></div>
+        <section class="panel" id="referenceTrials" aria-labelledby="referenceTrialsHeading">
+          <header class="panel-head"><h3 id="referenceTrialsHeading">Try a reference against a function</h3></header>
+          <div class="pad">
+            <p class="muted">Source-only preview does not compile or run code. Similarity is not identity; declarations and types are not imported automatically.</p>
+            <label>Enabled reference source <select id="trialSource"></select></label>
+            <label>Reference file or pseudocode <select id="trialFile"></select></label>
+            <label>Target function <select id="trialTarget"></select></label>
+            <button id="trialShowSource" type="button">Show selected reference text</button>
+            <label>Function name <input id="trialName" maxlength="256"></label>
+            <label>Start line <input id="trialStart" type="number" min="1"></label>
+            <label>End line <input id="trialEnd" type="number" min="1"></label>
+            <label>Explicit identifier mappings <textarea id="trialMappings"></textarea></label>
+            <label>Reviewed source <textarea id="trialCode" spellcheck="false"></textarea></label>
+            <label>Reviewed prelude <textarea id="trialPrelude" spellcheck="false"></textarea></label>
+            <button id="trialPrepare" type="button">Prepare source preview</button>
+            <div id="trialPreview" aria-live="polite"></div>
+            <label><input id="trialConsent" type="checkbox" disabled> Submitted code may become a normal attempt, best or matched code visible to project agents, progress and exports.</label>
+            <button id="trialRun" type="button" disabled>Try and accept if verified</button>
+            <div id="trialLog" class="job-log" aria-live="polite"></div>
+            <div id="trialHistory"></div>
+          </div>
+        </section>
       </div>
     </section>
   </section>
@@ -584,6 +606,7 @@
 <script src="/assets/js/home.js"></script>
 <script src="/assets/js/project.js"></script>
 <script src="/assets/js/references.js"></script>
+<script src="/assets/js/reference_trials.js"></script>
 <script src="/assets/js/map.js"></script>
 <script src="/assets/js/agents.js"></script>
 <script src="/assets/js/function.js"></script>

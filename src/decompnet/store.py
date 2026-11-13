@@ -16,6 +16,16 @@ CREATE TABLE IF NOT EXISTS agents(
 CREATE TABLE IF NOT EXISTS projects(
   id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT, description TEXT, arch TEXT,
   big_endian INTEGER NOT NULL DEFAULT 0, root TEXT NOT NULL, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reference_trials(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source_id INTEGER NOT NULL REFERENCES reference_sources(id) ON DELETE CASCADE,
+  function_id INTEGER REFERENCES functions(id) ON DELETE SET NULL,
+  nonce TEXT NOT NULL, submitted_source TEXT NOT NULL, submitted_prelude TEXT NOT NULL,
+  source_hash TEXT NOT NULL, prelude_hash TEXT NOT NULL, provenance TEXT NOT NULL,
+  context_hash TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL,
+  result TEXT NOT NULL DEFAULT '{}', UNIQUE(project_id, nonce));
+CREATE INDEX IF NOT EXISTS idx_reference_trials_project_time ON reference_trials(project_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS reference_sources(
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL, root TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
@@ -52,7 +62,8 @@ CREATE TABLE IF NOT EXISTS functions(
   attempts INTEGER NOT NULL DEFAULT 0, abandons INTEGER NOT NULL DEFAULT 0,
   UNIQUE(project_id, name));
 CREATE TABLE IF NOT EXISTS claims(
-  function_id INTEGER PRIMARY KEY, agent_id INTEGER NOT NULL, claimed_at REAL, expires_at REAL);
+  function_id INTEGER PRIMARY KEY, agent_id INTEGER NOT NULL, claimed_at REAL, expires_at REAL,
+  reference_token TEXT);
 CREATE TABLE IF NOT EXISTS attempts(
   id INTEGER PRIMARY KEY, function_id INTEGER, agent_id INTEGER, score INTEGER, compiled INTEGER,
   context_version INTEGER, source TEXT, created_at REAL);
@@ -134,6 +145,7 @@ MIGRATIONS = [
     ("functions", "last_checked", "REAL"),                    # latest attempt, including failed compiles
     ("functions", "last_improved", "REAL"),                   # latest compiled attempt that improved the score
     ("reference_sources", "agent_access", "INTEGER NOT NULL DEFAULT 0"),  # #270: explicit opt-in before model access
+    ("claims", "reference_token", "TEXT"),  # a reference trial owns only its nonce-bound claim
 ]
 
 # What the counts ask of each function's meta, copied into columns of their own: an index can hold a column, and
